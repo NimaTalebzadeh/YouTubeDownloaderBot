@@ -23,6 +23,6 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y ffmpeg && rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /app/publish .
-EXPOSE 5003 # Ensure this matches the port in docker-compose.yml for consistency
+EXPOSE 5003 # This port must match the one in docker-compose.yml
 
 ENTRYPOINT ["dotnet", "YouTubeDownloaderBot.dll"]
