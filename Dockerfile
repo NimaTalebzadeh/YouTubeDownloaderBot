@@ -4,12 +4,17 @@ WORKDIR /src
 # Install FFmpeg
 RUN apt-get update && apt-get install -y ffmpeg && rm -rf /var/lib/apt/lists/*
 
-COPY ["YouTubeDownloaderBot/YouTubeDownloaderBot.csproj", "YouTubeDownloaderBot/"]
-RUN dotnet restore "YouTubeDownloaderBot/YouTubeDownloaderBot.csproj"
+# Copy the csproj file to the WORKDIR /src
+# This assumes YouTubeDownloaderBot.csproj is at the root of the build context
+COPY YouTubeDownloaderBot.csproj .
+RUN dotnet restore YouTubeDownloaderBot.csproj
 
+# Copy all other project files
 COPY . .
-WORKDIR "/src/YouTubeDownloaderBot"
-RUN dotnet publish "YouTubeDownloaderBot.csproj" -c Release -o /app/publish /p:UseAppHost=false
+
+# Publish the application from the root of the project in /src
+# The csproj is in the current directory now.
+RUN dotnet publish YouTubeDownloaderBot.csproj -c Release -o /app/publish /p:UseAppHost=false
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
 WORKDIR /app
@@ -18,6 +23,6 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y ffmpeg && rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /app/publish .
-EXPOSE 5000
+EXPOSE 5003 # Ensure this matches the port in docker-compose.yml for consistency
 
 ENTRYPOINT ["dotnet", "YouTubeDownloaderBot.dll"]
