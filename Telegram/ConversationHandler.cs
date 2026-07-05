@@ -36,7 +36,6 @@ public sealed class ConversationHandler
         {
             switch (session.CurrentStep)
             {
-                case DownloadStep.Start:
                 case DownloadStep.WaitingForUrl:
                     await HandleUrlStep(bot, chatId, session, text, ct);
                     break;
@@ -70,15 +69,50 @@ public sealed class ConversationHandler
             return;
         }
 
+        if (!IsYouTubeUrl(uri))
+        {
+            await bot.SendMessage(chatId, "Please send a valid YouTube URL (e.g. https://youtube.com/watch?v=...)", cancellationToken: ct);
+            return;
+        }
+
         var isPlaylist = IsPlaylistUrl(uri);
         session.IsPlaylist = isPlaylist;
-        session.Url = input;
+
+        // For playlists, use the first video URL to get available stream qualities
+        var urlForInfo = input;
+        if (isPlaylist)
+        {
+            session.Url = input;
+            try
+            {
+                var playlistInfo = await _downloadService.GetPlaylistInfoAsync(input, ct);
+                if (playlistInfo.VideoUrls.Count == 0)
+                {
+                    await bot.SendMessage(chatId, "This playlist is empty. Please try another URL.", cancellationToken: ct);
+                    return;
+                }
+                urlForInfo = playlistInfo.VideoUrls[0];
+                session.VideoTitle = playlistInfo.Title;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to get playlist info for URL: {Url}", input);
+                await bot.SendMessage(chatId, $"Could not fetch playlist info: {ex.Message}\n\nSend /start to try again.", cancellationToken: ct);
+                session.CurrentStep = DownloadStep.Error;
+                _sessionManager.UpdateSession(session);
+                return;
+            }
+        }
+        else
+        {
+            session.Url = input;
+        }
 
         await bot.SendMessage(chatId, "Fetching video info...", cancellationToken: ct);
 
         try
         {
-            var info = await _downloadService.GetVideoInfoAsync(input, ct);
+            var info = await _downloadService.GetVideoInfoAsync(urlForInfo, ct);
             session.VideoTitle = info.Title;
             session.VideoOptions = info.VideoOptions;
             session.AudioOptions = info.AudioOptions;
@@ -93,7 +127,7 @@ public sealed class ConversationHandler
             });
 
             var infoMsg = isPlaylist
-                ? $"<b>Playlist:</b> {EscapeHtml(info.Title)}\n<b>Videos:</b> {info.VideoOptions.Count} quality options\n\n"
+                ? $"<b>Playlist:</b> {EscapeHtml(session.VideoTitle ?? info.Title)}\n<b>Videos:</b> {info.VideoOptions.Count} quality options\n\n"
                 : $"<b>Video:</b> {EscapeHtml(info.Title)}\n<b>Channel:</b> {EscapeHtml(info.Author)}\n<b>Duration:</b> {info.Duration?.ToString(@"hh\:mm\:ss") ?? "Unknown"}\n\n";
 
             await bot.SendMessage(chatId,
@@ -249,24 +283,48 @@ public sealed class ConversationHandler
     public async Task HandleCallbackAsync(ITelegramBotClient bot, long chatId, long userId, string data, CancellationToken ct)
     {
         var session = _sessionManager.GetOrCreateSession(userId);
-        
+
         if (data.StartsWith("type:"))
         {
+            if (session.CurrentStep != DownloadStep.WaitingForType)
+            {
+                await bot.SendMessage(chatId, "Please send a YouTube URL first, then select the type.", cancellationToken: ct);
+                return;
+            }
+
             var type = data[5..];
             await HandleTypeStep(bot, chatId, session, type, ct);
         }
         else if (data.StartsWith("quality:"))
         {
+            if (session.CurrentStep != DownloadStep.WaitingForVideoQuality)
+            {
+                await bot.SendMessage(chatId, "Please select the download type and quality in order.", cancellationToken: ct);
+                return;
+            }
+
             var indexStr = data[8..];
             await HandleVideoQualityStep(bot, chatId, session, indexStr, ct);
         }
         else if (data.StartsWith("audioq:"))
         {
+            if (session.CurrentStep != DownloadStep.WaitingForAudioQuality)
+            {
+                await bot.SendMessage(chatId, "Please select the download type and quality in order.", cancellationToken: ct);
+                return;
+            }
+
             var indexStr = data[7..];
             await HandleAudioQualityStep(bot, chatId, session, indexStr, ct);
         }
         else if (data.StartsWith("confirm:"))
         {
+            if (session.CurrentStep != DownloadStep.Downloading)
+            {
+                await bot.SendMessage(chatId, "No pending download to confirm. Send /start to begin.", cancellationToken: ct);
+                return;
+            }
+
             var confirm = data[8..];
             if (confirm == "yes")
             {
@@ -320,7 +378,7 @@ public sealed class ConversationHandler
             {
                 try
                 {
-                    await bot.EditMessageText(chatId, progressMessage.MessageId, $"📥 Downloading... {p:P0}", cancellationToken: ct);
+                    await bot.EditMessageText(chatId, progressMessage.MessageId, $"📥 Downloading... {p:P0}");
                 }
                 catch { }
             });
@@ -378,9 +436,8 @@ public sealed class ConversationHandler
             {
                 try
                 {
-                    await bot.EditMessageText(chatId, progressMessage.MessageId, 
-                        $"📥 Downloading playlist: [{p.current}/{p.total}]\n{p.title}", 
-                        cancellationToken: ct);
+                    await bot.EditMessageText(chatId, progressMessage.MessageId,
+                        $"📥 Downloading playlist: [{p.current}/{p.total}]\n{p.title}");
                 }
                 catch { }
             });
@@ -488,7 +545,7 @@ public sealed class ConversationHandler
             {
                 try
                 {
-                    await bot.EditMessageText(chatId, progressMessage.MessageId, $"🎵 Downloading audio... {p:P0}", cancellationToken: ct);
+                    await bot.EditMessageText(chatId, progressMessage.MessageId, $"🎵 Downloading audio... {p:P0}");
                 }
                 catch { }
             });
@@ -555,9 +612,8 @@ public sealed class ConversationHandler
             {
                 try
                 {
-                    await bot.EditMessageText(chatId, progressMessage.MessageId, 
-                        $"🎵 Downloading playlist audio: [{p.current}/{p.total}]\n{p.title}", 
-                        cancellationToken: ct);
+                    await bot.EditMessageText(chatId, progressMessage.MessageId,
+                        $"🎵 Downloading playlist audio: [{p.current}/{p.total}]\n{p.title}");
                 }
                 catch { }
             });
@@ -686,6 +742,12 @@ public sealed class ConversationHandler
         }
 
         return false;
+    }
+
+    private static bool IsYouTubeUrl(Uri uri)
+    {
+        var host = uri.Host.ToLowerInvariant();
+        return host is "youtube.com" or "www.youtube.com" or "youtu.be" or "m.youtube.com" or "youtube-nocookie.com";
     }
 
     private static string EscapeHtml(string text) =>

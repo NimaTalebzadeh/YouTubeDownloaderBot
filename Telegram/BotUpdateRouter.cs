@@ -94,15 +94,10 @@ public sealed class BotUpdateRouter
             }
             else
             {
-                var keyboard = new InlineKeyboardMarkup(new[]
-                {
-                    new[] { InlineKeyboardButton.WithCallbackData("📥 Download Video", "type:video"), InlineKeyboardButton.WithCallbackData("🎵 Download Audio", "type:audio") }
-                });
-                
                 await bot.SendMessage(chatId,
                     "Send me a YouTube video or playlist URL to get started.\n\n" +
                     "Or use /help for more commands.",
-                    replyMarkup: keyboard, cancellationToken: ct);
+                    cancellationToken: ct);
             }
         }
         catch (Exception ex)
@@ -119,7 +114,6 @@ public sealed class BotUpdateRouter
 
         var keyboard = new InlineKeyboardMarkup(new[]
         {
-            new[] { InlineKeyboardButton.WithCallbackData("📥 Download Video", "type:video"), InlineKeyboardButton.WithCallbackData("🎵 Download Audio", "type:audio") },
             new[] { InlineKeyboardButton.WithCallbackData("ℹ️ Help", "cmd:help"), InlineKeyboardButton.WithCallbackData("🔧 Check FFmpeg", "cmd:checkffmpeg") }
         });
 
