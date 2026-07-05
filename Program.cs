@@ -16,6 +16,7 @@ Log.Logger = new LoggerConfiguration()
 builder.Host.UseSerilog();
 
 builder.Services.AddSingleton<UserSessionManager>();
+builder.Services.AddSingleton<DownloadCacheService>();
 builder.Services.AddSingleton<YouTubeDownloadService>();
 builder.Services.AddSingleton<ConversationHandler>();
 builder.Services.AddSingleton<BotUpdateRouter>();

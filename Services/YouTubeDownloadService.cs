@@ -13,10 +13,12 @@ public sealed class YouTubeDownloadService
 {
     private readonly YoutubeClient _youtube = new();
     private readonly string _tempDirectory;
+    private readonly DownloadCacheService _cache;
     private readonly ILogger<YouTubeDownloadService> _logger;
 
-    public YouTubeDownloadService(ILogger<YouTubeDownloadService> logger)
+    public YouTubeDownloadService(DownloadCacheService cache, ILogger<YouTubeDownloadService> logger)
     {
+        _cache = cache;
         _logger = logger;
         _tempDirectory = Path.Combine(Path.GetTempPath(), "YouTubeDownloaderBot");
         Directory.CreateDirectory(_tempDirectory);
@@ -82,13 +84,20 @@ public sealed class YouTubeDownloadService
         };
     }
 
-    public async Task<string> DownloadVideoAsync(
-        string url, 
-        VideoQualityOption option, 
-        string title, 
+    public async Task<DownloadResult> DownloadVideoAsync(
+        string url,
+        VideoQualityOption option,
+        string title,
         IProgress<double>? progress = null,
         CancellationToken ct = default)
     {
+        var qualityKey = $"video-{option.MaxHeight}-{(option.NeedsFFmpeg ? "ffmpeg" : "muxed")}";
+
+        // Cache hit — skip YouTube + FFmpeg entirely.
+        var cached = await _cache.TryGetAsync(url, "video", qualityKey);
+        if (cached != null)
+            return new DownloadResult(cached, FromCache: true);
+
         var manifest = await _youtube.Videos.Streams.GetManifestAsync(url, ct);
         var fileName = SanitizeFileName(title) + ".mp4";
         var outputPath = Path.Combine(_tempDirectory, fileName);
@@ -108,9 +117,9 @@ public sealed class YouTubeDownloadService
                 .Build();
 
             await _youtube.Videos.DownloadAsync(
-                new IStreamInfo[] { videoStream, audioStream }, 
-                request, 
-                progress, 
+                new IStreamInfo[] { videoStream, audioStream },
+                request,
+                progress,
                 ct);
         }
         else
@@ -123,22 +132,29 @@ public sealed class YouTubeDownloadService
             await _youtube.Videos.Streams.DownloadAsync(muxedStream, outputPath, progress, ct);
         }
 
-        return outputPath;
+        await _cache.StoreAsync(outputPath, url, "video", qualityKey, fileName);
+        return new DownloadResult(outputPath, FromCache: false);
     }
 
-    public async Task<string> DownloadAudioAsync(
-        string url, 
-        AudioQualityOption option, 
-        string title, 
+    public async Task<DownloadResult> DownloadAudioAsync(
+        string url,
+        AudioQualityOption option,
+        string title,
         IProgress<double>? progress = null,
         CancellationToken ct = default)
     {
+        var qualityKey = $"audio-{option.BitrateKbps}kbps";
+
+        var cached = await _cache.TryGetAsync(url, "audio", qualityKey);
+        if (cached != null)
+            return new DownloadResult(cached, FromCache: true);
+
         var manifest = await _youtube.Videos.Streams.GetManifestAsync(url, ct);
-        
+
         var audioStreams = manifest.GetAudioOnlyStreams()
             .OrderByDescending(s => s.Bitrate)
             .ToList();
-        
+
         var stream = audioStreams.FirstOrDefault(s => s.Bitrate.KiloBitsPerSecond == option.BitrateKbps)
             ?? audioStreams.First();
 
@@ -151,12 +167,13 @@ public sealed class YouTubeDownloadService
             .Build();
 
         await _youtube.Videos.DownloadAsync(
-            new IStreamInfo[] { stream }, 
-            request, 
-            progress, 
+            new IStreamInfo[] { stream },
+            request,
+            progress,
             ct);
 
-        return outputPath;
+        await _cache.StoreAsync(outputPath, url, "audio", qualityKey, fileName);
+        return new DownloadResult(outputPath, FromCache: false);
     }
 
     public async Task<string> DownloadPlaylistVideosAsync(
@@ -373,10 +390,14 @@ public sealed class YouTubeDownloadService
     {
         try
         {
-            if (Directory.Exists(_tempDirectory))
+            if (!Directory.Exists(_tempDirectory))
+                return;
+
+            // Delete only loose working files in the temp root — leave subdirectories
+            // (notably the persistent cache) untouched.
+            foreach (var file in Directory.EnumerateFiles(_tempDirectory))
             {
-                Directory.Delete(_tempDirectory, true);
-                Directory.CreateDirectory(_tempDirectory);
+                try { File.Delete(file); } catch { }
             }
         }
         catch (Exception ex)
@@ -394,6 +415,14 @@ public record VideoInfo
     public List<VideoQualityOption> VideoOptions { get; init; } = new();
     public List<AudioQualityOption> AudioOptions { get; init; } = new();
 }
+
+/// <summary>
+/// Result of a single-video/audio download. <see cref="FilePath"/> points to a
+/// temp working file the caller owns (and should delete after sending).
+/// <see cref="FromCache"/> is true when the file was served from the cache and
+/// no YouTube/FFmpeg work was performed.
+/// </summary>
+public sealed record DownloadResult(string FilePath, bool FromCache);
 
 public record PlaylistInfo
 {

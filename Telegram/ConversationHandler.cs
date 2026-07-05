@@ -386,9 +386,15 @@ public sealed class ConversationHandler
 
         try
         {
-            var filePath = await _downloadService.DownloadVideoAsync(
+            var result = await _downloadService.DownloadVideoAsync(
                 session.Url!, option, title, progress, ct);
 
+            if (result.FromCache)
+            {
+                await bot.EditMessageText(chatId, progressMessage.MessageId, "⚡ <b>Found in cache!</b> Sending instantly...", parseMode: ParseMode.Html, cancellationToken: ct);
+            }
+
+            var filePath = result.FilePath;
             var fileInfo = new FileInfo(filePath);
             await using var fileStream = File.OpenRead(filePath);
             
@@ -403,8 +409,11 @@ public sealed class ConversationHandler
             session.CurrentStep = DownloadStep.Done;
             _sessionManager.UpdateSession(session);
 
-            // Clean up temp file
-            try { File.Delete(filePath); } catch { }
+            // Clean up the temp working file only — never delete a cached copy.
+            if (!result.FromCache)
+            {
+                try { File.Delete(filePath); } catch { }
+            }
         }
         catch (Exception ex)
         {
@@ -553,9 +562,15 @@ public sealed class ConversationHandler
 
         try
         {
-            var filePath = await _downloadService.DownloadAudioAsync(
+            var result = await _downloadService.DownloadAudioAsync(
                 session.Url!, option, title, progress, ct);
 
+            if (result.FromCache)
+            {
+                await bot.EditMessageText(chatId, progressMessage.MessageId, "⚡ <b>Found in cache!</b> Sending instantly...", parseMode: ParseMode.Html, cancellationToken: ct);
+            }
+
+            var filePath = result.FilePath;
             var fileInfo = new FileInfo(filePath);
             if (fileInfo.Length > 50 * 1024 * 1024)
             {
@@ -580,7 +595,11 @@ public sealed class ConversationHandler
             session.CurrentStep = DownloadStep.Done;
             _sessionManager.UpdateSession(session);
 
-            try { File.Delete(filePath); } catch { }
+            // Clean up the temp working file only — never delete a cached copy.
+            if (!result.FromCache)
+            {
+                try { File.Delete(filePath); } catch { }
+            }
         }
         catch (Exception ex)
         {
