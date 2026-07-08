@@ -22,12 +22,15 @@ RUN dotnet publish YouTubeDownloaderBot.csproj -c Release -o /app/publish /p:Use
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
 WORKDIR /app
 
-# Install FFmpeg in runtime image
-RUN apt-get update && apt-get install -y ffmpeg && rm -rf /var/lib/apt/lists/*
+# Install FFmpeg and curl in runtime image
+RUN apt-get update && apt-get install -y ffmpeg curl && rm -rf /var/lib/apt/lists/*
 
 # Install yt-dlp for Instagram downloads
 RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && \
     chmod a+rx /usr/local/bin/yt-dlp
+
+# Ensure it's in the PATH
+ENV PATH="/usr/local/bin:${PATH}"
 
 COPY --from=build /app/publish .
 EXPOSE 5000
