@@ -1,8 +1,11 @@
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 
-# Install FFmpeg
-RUN apt-get update && apt-get install -y ffmpeg && rm -rf /var/lib/apt/lists/*
+# Install FFmpeg and yt-dlp
+RUN apt-get update && apt-get install -y ffmpeg curl && \
+    curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && \
+    chmod a+rx /usr/local/bin/yt-dlp && \
+    rm -rf /var/lib/apt/lists/*
 
 # Copy the csproj file to the WORKDIR /src
 # This assumes YouTubeDownloaderBot.csproj is at the root of the build context
@@ -21,6 +24,10 @@ WORKDIR /app
 
 # Install FFmpeg in runtime image
 RUN apt-get update && apt-get install -y ffmpeg && rm -rf /var/lib/apt/lists/*
+
+# Install yt-dlp for Instagram downloads
+RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && \
+    chmod a+rx /usr/local/bin/yt-dlp
 
 COPY --from=build /app/publish .
 EXPOSE 5000
