@@ -426,15 +426,39 @@ public sealed class ConversationHandler
 
             var filePath = result.FilePath;
             var fileInfo = new FileInfo(filePath);
-            await using var fileStream = File.OpenRead(filePath);
-            
-            await bot.DeleteMessage(chatId, progressMessage.MessageId, ct);
-            await bot.SendVideo(
-                chatId,
-                InputFile.FromStream(fileStream, Path.GetFileName(filePath)),
-                caption: $"✅ {EscapeHtml(title)}",
-                supportsStreaming: true,
-                cancellationToken: ct);
+            if (fileInfo.Length > 50 * 1024 * 1024)
+            {
+                await bot.EditMessageText(chatId, progressMessage.MessageId, "⚠️ File > 50MB, splitting into parts...", cancellationToken: ct);
+                var parts = await _downloadService.SplitVideoAsync(filePath, ct);
+                
+                foreach (var part in parts)
+                {
+                    await using var partStream = File.OpenRead(part);
+                    await bot.SendVideo(
+                        chatId,
+                        InputFile.FromStream(partStream, Path.GetFileName(part)),
+                        caption: $"✅ {EscapeHtml(title)} (Part {parts.IndexOf(part) + 1}/{parts.Count})",
+                        supportsStreaming: true,
+                        cancellationToken: ct);
+                }
+                
+                // Clean up split parts
+                foreach (var part in parts)
+                {
+                    try { File.Delete(part); } catch { }
+                }
+            }
+            else
+            {
+                await using var fileStream = File.OpenRead(filePath);
+                await bot.DeleteMessage(chatId, progressMessage.MessageId, ct);
+                await bot.SendVideo(
+                    chatId,
+                    InputFile.FromStream(fileStream, Path.GetFileName(filePath)),
+                    caption: $"✅ {EscapeHtml(title)}",
+                    supportsStreaming: true,
+                    cancellationToken: ct);
+            }
 
             session.CurrentStep = DownloadStep.Done;
             _sessionManager.UpdateSession(session);
@@ -499,25 +523,39 @@ public sealed class ConversationHandler
                 try
                 {
                     var fileInfo = new FileInfo(filePath);
-                    if (fileInfo.Length > 50 * 1024 * 1024) // 50MB limit for bots
+                    if (fileInfo.Length > 50 * 1024 * 1024)
                     {
-                        _logger.LogWarning("File too large for Telegram: {File} ({Size} bytes)", filePath, fileInfo.Length);
-                        await bot.SendMessage(chatId, 
-                            $"⚠️ <b>File too large for Telegram:</b> {Path.GetFileName(filePath)} ({fileInfo.Length / 1024 / 1024} MB)\n" +
-                            "Telegram bots have a 50MB file size limit.",
-                            parseMode: ParseMode.Html, cancellationToken: ct);
-                        continue;
-                    }
+                        var parts = await _downloadService.SplitVideoAsync(filePath, ct);
 
-                    await using var fileStream = File.OpenRead(filePath);
-                    await bot.SendVideo(
-                        chatId,
-                        InputFile.FromStream(fileStream, Path.GetFileName(filePath)),
-                        caption: $"✅ {Path.GetFileNameWithoutExtension(filePath)}",
-                        supportsStreaming: true,
-                        cancellationToken: ct);
+                        foreach (var part in parts)
+                        {
+                            await using var partStream = File.OpenRead(part);
+                            await bot.SendVideo(
+                                chatId,
+                                InputFile.FromStream(partStream, Path.GetFileName(part)),
+                                caption: $"✅ {EscapeHtml(playlistTitle)} (Part {parts.IndexOf(part) + 1}/{parts.Count})",
+                                supportsStreaming: true,
+                                cancellationToken: ct);
+                        }
+
+                        // Clean up split parts
+                        foreach (var part in parts)
+                        {
+                            try { File.Delete(part); } catch { }
+                        }
+                    }
+                    else
+                    {
+                        await using var fileStream = File.OpenRead(filePath);
+                        await bot.SendVideo(
+                            chatId,
+                            InputFile.FromStream(fileStream, Path.GetFileName(filePath)),
+                            caption: $"✅ {EscapeHtml(playlistTitle)}",
+                            supportsStreaming: true,
+                            cancellationToken: ct);
                     
-                    sent++;
+                        sent++;
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -541,7 +579,7 @@ public sealed class ConversationHandler
         {
             _logger.LogError(ex, "Playlist download failed");
             await bot.EditMessageText(chatId, progressMessage.MessageId, 
-                $"❌ <b>Download failed:</b>\n<code>{EscapeHtml(ex.Message)}</code>",
+                $"❌ <b>Playlist download failed:</b>\n<code>{EscapeHtml(ex.Message)}</code>\n\nSend /start to try again.",
                 parseMode: ParseMode.Html, cancellationToken: ct);
             session.CurrentStep = DownloadStep.Error;
             _sessionManager.UpdateSession(session);
@@ -549,14 +587,14 @@ public sealed class ConversationHandler
     }
 
     private async Task HandleInstagramDownload(
-        ITelegramBotClient bot,
-        long chatId,
-        UserDownloadSession session,
-        bool isAudio,
-        string title,
+        ITelegramBotClient bot, 
+        long chatId, 
+        UserDownloadSession session, 
+        bool isAudio, 
+        string title, 
         CancellationToken ct)
     {
-        var emoji = isAudio ? "🎵" : "📥";
+        var emoji = isAudio ? "🎵" : "📹";
         var progressMessage = await bot.SendMessage(chatId, $"{emoji} Downloading from Instagram...", cancellationToken: ct);
 
         try
@@ -567,36 +605,73 @@ public sealed class ConversationHandler
             var fileInfo = new FileInfo(filePath);
             if (fileInfo.Length > 50 * 1024 * 1024)
             {
-                await bot.EditMessageText(chatId, progressMessage.MessageId,
-                    $"❌ <b>File too large for Telegram:</b> {fileInfo.Length / 1024 / 1024} MB\n" +
-                    "Telegram bots have a 50MB file size limit.",
-                    parseMode: ParseMode.Html, cancellationToken: ct);
-                session.CurrentStep = DownloadStep.Error;
-                _sessionManager.UpdateSession(session);
-                return;
-            }
+                await bot.EditMessageText(chatId, progressMessage.MessageId, "⚠️ File > 50MB, splitting into parts...", cancellationToken: ct);
+                var parts = await _downloadService.SplitVideoAsync(filePath, ct);
 
-            await using var fileStream = File.OpenRead(filePath);
-            await bot.DeleteMessage(chatId, progressMessage.MessageId, ct);
+                foreach (var part in parts)
+                {
+                    await using var partStream = File.OpenRead(part);
+                    if (isAudio)
+                    {
+                        await bot.SendAudio(
+                            chatId,
+                            InputFile.FromStream(partStream, Path.GetFileName(part)),
+                            caption: $"✅ {EscapeHtml(title)} (Part {parts.IndexOf(part) + 1}/{parts.Count})",
+                            cancellationToken: ct);
+                    }
+                    else
+                    {
+                        await bot.SendVideo(
+                            chatId,
+                            InputFile.FromStream(partStream, Path.GetFileName(part)),
+                            caption: $"✅ {EscapeHtml(title)} (Part {parts.IndexOf(part) + 1}/{parts.Count})",
+                            supportsStreaming: true,
+                            cancellationToken: ct);
+                    }
+                }
 
-            if (isAudio)
-            {
-                await bot.SendAudio(chatId, InputFile.FromStream(fileStream, Path.GetFileName(filePath)), title: EscapeHtml(title), cancellationToken: ct);
+                // Clean up split parts
+                foreach (var part in parts)
+                {
+                    try { File.Delete(part); } catch { }
+                }
             }
             else
             {
-                await bot.SendVideo(chatId, InputFile.FromStream(fileStream, Path.GetFileName(filePath)), caption: $"✅ {EscapeHtml(title)}", supportsStreaming: true, cancellationToken: ct);
+                await using var fileStream = File.OpenRead(filePath);
+                await bot.DeleteMessage(chatId, progressMessage.MessageId, ct);
+                if (isAudio)
+                {
+                    await bot.SendAudio(
+                        chatId,
+                        InputFile.FromStream(fileStream, Path.GetFileName(filePath)),
+                        caption: $"✅ {EscapeHtml(title)}",
+                        cancellationToken: ct);
+                }
+                else
+                {
+                    await bot.SendVideo(
+                        chatId,
+                        InputFile.FromStream(fileStream, Path.GetFileName(filePath)),
+                        caption: $"✅ {EscapeHtml(title)}",
+                        supportsStreaming: true,
+                        cancellationToken: ct);
+                }
             }
 
             session.CurrentStep = DownloadStep.Done;
             _sessionManager.UpdateSession(session);
 
-            try { File.Delete(filePath); } catch { }
+            // Clean up the temp working file only — never delete a cached copy.
+            if (!result.FromCache)
+            {
+                try { File.Delete(filePath); } catch { }
+            }
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Instagram download failed");
-            await bot.EditMessageText(chatId, progressMessage.MessageId,
+            await bot.EditMessageText(chatId, progressMessage.MessageId, 
                 $"❌ <b>Download failed:</b>\n<code>{EscapeHtml(ex.Message)}</code>\n\nSend /start to try again.",
                 parseMode: ParseMode.Html, cancellationToken: ct);
             session.CurrentStep = DownloadStep.Error;
@@ -619,7 +694,7 @@ public sealed class ConversationHandler
         {
             await HandleInstagramDownload(bot, chatId, session, true, title, ct);
         }
-        else if (session.IsPlaylist)
+        else if (session.IsPlaylist && session.AudioOptions.Count > 0)
         {
             await HandlePlaylistAudioDownload(bot, chatId, session, option, title, ct);
         }
@@ -664,23 +739,35 @@ public sealed class ConversationHandler
             var fileInfo = new FileInfo(filePath);
             if (fileInfo.Length > 50 * 1024 * 1024)
             {
-                await bot.EditMessageText(chatId, progressMessage.MessageId,
-                    $"❌ <b>File too large for Telegram:</b> {fileInfo.Length / 1024 / 1024} MB\n" +
-                    "Telegram bots have a 50MB file size limit.",
-                    parseMode: ParseMode.Html, cancellationToken: ct);
-                session.CurrentStep = DownloadStep.Error;
-                _sessionManager.UpdateSession(session);
-                return;
-            }
+                await bot.EditMessageText(chatId, progressMessage.MessageId, "⚠️ File > 50MB, splitting into parts...", cancellationToken: ct);
+                var parts = await _downloadService.SplitVideoAsync(filePath, ct);
 
-            await using var fileStream = File.OpenRead(filePath);
-            
-            await bot.DeleteMessage(chatId, progressMessage.MessageId, ct);
-            await bot.SendAudio(
-                chatId,
-                InputFile.FromStream(fileStream, Path.GetFileName(filePath)),
-                title: EscapeHtml(title),
-                cancellationToken: ct);
+                foreach (var part in parts)
+                {
+                    await using var partStream = File.OpenRead(part);
+                    await bot.SendAudio(
+                        chatId,
+                        InputFile.FromStream(partStream, Path.GetFileName(part)),
+                        caption: $"✅ {EscapeHtml(title)} (Part {parts.IndexOf(part) + 1}/{parts.Count})",
+                        cancellationToken: ct);
+                }
+
+                // Clean up split parts
+                foreach (var part in parts)
+                {
+                    try { File.Delete(part); } catch { }
+                }
+            }
+            else
+            {
+                await using var fileStream = File.OpenRead(filePath);
+                await bot.DeleteMessage(chatId, progressMessage.MessageId, ct);
+                await bot.SendAudio(
+                    chatId,
+                    InputFile.FromStream(fileStream, Path.GetFileName(filePath)),
+                    caption: $"✅ {EscapeHtml(title)}",
+                    cancellationToken: ct);
+            }
 
             session.CurrentStep = DownloadStep.Done;
             _sessionManager.UpdateSession(session);
@@ -712,9 +799,9 @@ public sealed class ConversationHandler
     {
         var playlistInfo = await _downloadService.GetPlaylistInfoAsync(session.Url!, ct);
         var urls = playlistInfo.VideoUrls;
-        
-        var progressMessage = await bot.SendMessage(chatId, $"🎵 Starting playlist audio download (0/{urls.Count})...", cancellationToken: ct);
-        
+
+        var progressMessage = await bot.SendMessage(chatId, $"🎵 Starting audio playlist download (0/{urls.Count})...", cancellationToken: ct);
+
         var progress = new Progress<(int current, int total, string title)>((p) => 
         {
             _ = Task.Run(async () =>
@@ -722,7 +809,7 @@ public sealed class ConversationHandler
                 try
                 {
                     await bot.EditMessageText(chatId, progressMessage.MessageId,
-                        $"🎵 Downloading playlist audio: [{p.current}/{p.total}]\n{p.title}");
+                        $"🎵 Downloading audio playlist: [{p.current}/{p.total}]\n{p.title}");
                 }
                 catch { }
             });
@@ -734,8 +821,9 @@ public sealed class ConversationHandler
                 urls, option, playlistTitle, progress, ct);
 
             await bot.EditMessageText(chatId, progressMessage.MessageId, 
-                "📦 Preparing files for upload...", cancellationToken: ct);
+                "📦 Preparing audio files for upload...", cancellationToken: ct);
 
+            // Send files one by one
             var files = Directory.GetFiles(playlistDir, "*.mp3").OrderBy(f => f).ToList();
             int sent = 0;
 
@@ -746,20 +834,35 @@ public sealed class ConversationHandler
                     var fileInfo = new FileInfo(filePath);
                     if (fileInfo.Length > 50 * 1024 * 1024)
                     {
-                        await bot.SendMessage(chatId, 
-                            $"⚠️ <b>File too large for Telegram:</b> {Path.GetFileName(filePath)} ({fileInfo.Length / 1024 / 1024} MB)",
-                            parseMode: ParseMode.Html, cancellationToken: ct);
-                        continue;
-                    }
+                        var parts = await _downloadService.SplitVideoAsync(filePath, ct);
 
-                    await using var fileStream = File.OpenRead(filePath);
-                    await bot.SendAudio(
-                        chatId,
-                        InputFile.FromStream(fileStream, Path.GetFileName(filePath)),
-                        title: Path.GetFileNameWithoutExtension(filePath),
-                        cancellationToken: ct);
+                        foreach (var part in parts)
+                        {
+                            await using var partStream = File.OpenRead(part);
+                            await bot.SendAudio(
+                                chatId,
+                                InputFile.FromStream(partStream, Path.GetFileName(part)),
+                                caption: $"✅ {EscapeHtml(playlistTitle)} (Part {parts.IndexOf(part) + 1}/{parts.Count})",
+                                cancellationToken: ct);
+                        }
+
+                        // Clean up split parts
+                        foreach (var part in parts)
+                        {
+                            try { File.Delete(part); } catch { }
+                        }
+                    }
+                    else
+                    {
+                        await using var fileStream = File.OpenRead(filePath);
+                        await bot.SendAudio(
+                            chatId,
+                            InputFile.FromStream(fileStream, Path.GetFileName(filePath)),
+                            caption: $"✅ {EscapeHtml(playlistTitle)}",
+                            cancellationToken: ct);
                     
-                    sent++;
+                        sent++;
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -768,89 +871,60 @@ public sealed class ConversationHandler
             }
 
             await bot.SendMessage(chatId,
-                $"✅ <b>Playlist audio download complete!</b>\n\n" +
-                $"Sent: {sent}/{files.Count} audio files\n" +
+                $"✅ <b>Audio playlist download complete!</b>\n\n" +
+                $"Sent: {sent}/{files.Count} audio tracks\n" +
                 $"Failed: {files.Count - sent}",
                 parseMode: ParseMode.Html, cancellationToken: ct);
 
             session.CurrentStep = DownloadStep.Done;
             _sessionManager.UpdateSession(session);
 
+            // Cleanup
             try { Directory.Delete(playlistDir, true); } catch { }
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Playlist audio download failed");
+            _logger.LogError(ex, "Audio playlist download failed");
             await bot.EditMessageText(chatId, progressMessage.MessageId, 
-                $"❌ <b>Download failed:</b>\n<code>{EscapeHtml(ex.Message)}</code>",
+                $"❌ <b>Audio playlist download failed:</b>\n<code>{EscapeHtml(ex.Message)}</code>\n\nSend /start to try again.",
                 parseMode: ParseMode.Html, cancellationToken: ct);
             session.CurrentStep = DownloadStep.Error;
             _sessionManager.UpdateSession(session);
         }
     }
 
-    private static InlineKeyboardMarkup BuildVideoQualityKeyboard(List<VideoQualityOption> options)
+    private InlineKeyboardMarkup BuildVideoQualityKeyboard(List<VideoQualityOption> options)
     {
         var buttons = new List<InlineKeyboardButton[]>();
-        var row = new List<InlineKeyboardButton>();
-
         for (int i = 0; i < options.Count; i++)
         {
-            var label = options[i].NeedsFFmpeg 
-                ? $"{options[i].MaxHeight}p ⚡" 
-                : $"{options[i].MaxHeight}p";
-            
-            row.Add(InlineKeyboardButton.WithCallbackData(label, $"quality:{i}"));
-            
-            if (row.Count == 2)
+            buttons.Add(new[]
             {
-                buttons.Add(row.ToArray());
-                row.Clear();
-            }
+                InlineKeyboardButton.WithCallbackData(options[i].Label, $"quality:{i}")
+            });
         }
-
-        if (row.Count > 0)
-            buttons.Add(row.ToArray());
 
         return new InlineKeyboardMarkup(buttons);
     }
 
-    private static InlineKeyboardMarkup BuildAudioQualityKeyboard(List<AudioQualityOption> options)
+    private InlineKeyboardMarkup BuildAudioQualityKeyboard(List<AudioQualityOption> options)
     {
         var buttons = new List<InlineKeyboardButton[]>();
-        var row = new List<InlineKeyboardButton>();
-
         for (int i = 0; i < options.Count; i++)
         {
-            row.Add(InlineKeyboardButton.WithCallbackData($"{options[i].BitrateKbps} kbps", $"audioq:{i}"));
-            
-            if (row.Count == 2)
+            buttons.Add(new[]
             {
-                buttons.Add(row.ToArray());
-                row.Clear();
-            }
+                InlineKeyboardButton.WithCallbackData(options[i].Label, $"audioq:{i}")
+            });
         }
-
-        if (row.Count > 0)
-            buttons.Add(row.ToArray());
 
         return new InlineKeyboardMarkup(buttons);
     }
 
-    private static bool IsPlaylistUrl(Uri uri)
+    private static bool IsYouTubeUrl(Uri uri)
     {
-        if (uri.AbsolutePath.Contains("/playlist", StringComparison.OrdinalIgnoreCase))
-            return true;
-
-        var query = uri.Query.TrimStart('?');
-        foreach (var part in query.Split('&', StringSplitOptions.RemoveEmptyEntries))
-        {
-            var kv = part.Split('=', 2);
-            if (kv.Length == 2 && kv[0].Equals("list", StringComparison.OrdinalIgnoreCase))
-                return true;
-        }
-
-        return false;
+        var host = uri.Host.ToLowerInvariant();
+        return host.Contains("youtube.com") || host.Contains("youtu.be");
     }
 
     private static bool IsInstagramUrl(Uri uri)
@@ -859,12 +933,16 @@ public sealed class ConversationHandler
         return host.Contains("instagram.com");
     }
 
-    private static bool IsYouTubeUrl(Uri uri)
+    private static bool IsPlaylistUrl(Uri uri)
     {
-        var host = uri.Host.ToLowerInvariant();
-        return host is "youtube.com" or "www.youtube.com" or "youtu.be" or "m.youtube.com" or "youtube-nocookie.com";
+        return uri.Segments.Contains("playlist") || uri.Query.Contains("list=") || uri.Query.Contains("list%3D");
     }
 
-    private static string EscapeHtml(string text) =>
-        text.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;");
+    private static string EscapeHtml(string text)
+    {
+        return text.Replace("&", "&amp;")
+                   .Replace("<", "&lt;")
+                   .Replace(">", "&gt;")
+                   .Replace("\"", "&quot;");
+    }
 }

@@ -50,13 +50,44 @@ public sealed class YouTubeDownloadService
         }
     }
 
+    public async Task<List<string>> SplitVideoAsync(string inputPath, CancellationToken ct)
+    {
+        var outputPattern = Path.Combine(_tempDirectory, $"part_{Guid.NewGuid()}_%03d.mp4");
+        // Split into ~50MB segments using segment time (2 minutes per segment)
+        var args = $"-i \"{inputPath}\" -c copy -map 0 -segment_time 00:02:00 -f segment \"{outputPattern}\"";
+        
+        var process = new Process
+        {
+            StartInfo = new ProcessStartInfo
+            {
+                FileName = "ffmpeg",
+                Arguments = args,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            }
+        };
+
+        process.Start();
+        await process.WaitForExitAsync(ct);
+
+        if (process.ExitCode != 0)
+        {
+            var error = await process.StandardError.ReadToEndAsync(ct);
+            throw new Exception($"Splitting failed: {error}");
+        }
+
+        var guid = Path.GetFileNameWithoutExtension(outputPattern).Split('_')[1];
+        return Directory.GetFiles(_tempDirectory, $"part_{guid}_*.mp4").ToList();
+    }
+
     public async Task<VideoInfo> GetVideoInfoAsync(string url, CancellationToken ct)
     {
         var video = await _youtube.Videos.GetAsync(url, ct);
         var manifest = await _youtube.Videos.Streams.GetManifestAsync(url, ct);
 
         var bestAudio = manifest.GetAudioOnlyStreams().GetWithHighestBitrate() as AudioOnlyStreamInfo;
-        
         var videoOptions = BuildVideoOptions(manifest, bestAudio);
         var audioOptions = BuildAudioOptions(manifest);
 
