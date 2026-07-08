@@ -19,6 +19,12 @@ public enum DownloadType
     Audio
 }
 
+public enum SourcePlatform
+{
+    YouTube,
+    Instagram
+}
+
 public record UserDownloadSession
 {
     public long UserId { get; init; }
@@ -26,6 +32,7 @@ public record UserDownloadSession
     public DateTime LastActivity { get; set; } = DateTime.UtcNow;
     
     public string? Url { get; set; }
+    public SourcePlatform Platform { get; set; } = SourcePlatform.YouTube;
     public bool IsPlaylist { get; set; }
     public DownloadType DownloadType { get; set; } = DownloadType.None;
     public int SelectedQualityIndex { get; set; } = -1;

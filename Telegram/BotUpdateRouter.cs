@@ -13,17 +13,20 @@ public sealed class BotUpdateRouter
     private readonly UserSessionManager _sessionManager;
     private readonly ConversationHandler _conversationHandler;
     private readonly YouTubeDownloadService _downloadService;
+    private readonly InstagramDownloadService _instagramService;
     private readonly ILogger<BotUpdateRouter> _logger;
 
     public BotUpdateRouter(
         UserSessionManager sessionManager,
         ConversationHandler conversationHandler,
         YouTubeDownloadService downloadService,
+        InstagramDownloadService instagramService,
         ILogger<BotUpdateRouter> logger)
     {
         _sessionManager = sessionManager;
         _conversationHandler = conversationHandler;
         _downloadService = downloadService;
+        _instagramService = instagramService;
         _logger = logger;
     }
 
@@ -118,15 +121,13 @@ public sealed class BotUpdateRouter
         });
 
         await bot.SendMessage(chatId,
-            "<b>🎬 YouTube Downloader Bot</b>\n\n" +
-            "Send me a <b>YouTube video URL</b> or <b>playlist URL</b> and I'll help you download it.\n\n" +
+            "<b>🎬 YouTube & Instagram Downloader Bot</b>\n\n" +
+            "Send me a <b>YouTube</b> or <b>Instagram</b> URL and I'll help you download it.\n\n" +
             "<b>Features:</b>\n" +
-            "• Download videos in MP4 format (with audio merged)\n" +
-            "• Download audio only in MP3 format\n" +
-            "• Support for playlists\n" +
-            "• Multiple quality options\n" +
-            "• Automatic FFmpeg merging for high quality\n\n" +
-            "<b>Just send a YouTube link to begin!</b>",
+            "• Download videos/audio from YouTube\n" +
+            "• Download posts from Instagram\n" +
+            "• Playlist support (YouTube)\n\n" +
+            "<b>Just send a link to begin!</b>",
             parseMode: ParseMode.Html,
             replyMarkup: keyboard,
             cancellationToken: ct);
@@ -135,7 +136,7 @@ public sealed class BotUpdateRouter
     private async Task HandleHelpAsync(ITelegramBotClient bot, long chatId, CancellationToken ct)
     {
         const string helpMessage = """
-            <b>YouTube Downloader Bot - Help</b>
+            <b>YouTube & Instagram Downloader Bot - Help</b>
 
             <b>Commands:</b>
               /start        - Start the bot and show main menu
@@ -145,10 +146,14 @@ public sealed class BotUpdateRouter
               /checkffmpeg  - Verify FFmpeg installation
 
             <b>How to use:</b>
-            1. Send a YouTube video or playlist URL
+            1. Send a YouTube or Instagram URL
             2. Choose: Video (MP4) or Audio (MP3)
             3. Select quality from available options
             4. Wait for download and receive the file
+
+            <b>Supported platforms:</b>
+            • YouTube videos, playlists, shorts
+            • Instagram posts, reels
 
             <b>Quality Options:</b>
             • <b>Muxed streams</b> (≤720p) - Video+audio combined, no FFmpeg needed
@@ -162,7 +167,7 @@ public sealed class BotUpdateRouter
             • Telegram bot file limit: 50 MB
             • Large files may not be sendable
 
-            <b>Note:</b> FFmpeg must be installed on the server for high-quality downloads and audio conversion.
+            <b>Note:</b> FFmpeg must be installed on the server for high-quality downloads and audio conversion. yt-dlp must be installed for Instagram downloads.
             """;
 
         await bot.SendMessage(chatId, helpMessage, parseMode: ParseMode.Html, cancellationToken: ct);

@@ -12,15 +12,18 @@ public sealed class ConversationHandler
 {
     private readonly UserSessionManager _sessionManager;
     private readonly YouTubeDownloadService _downloadService;
+    private readonly InstagramDownloadService _instagramService;
     private readonly ILogger<ConversationHandler> _logger;
 
     public ConversationHandler(
         UserSessionManager sessionManager,
         YouTubeDownloadService downloadService,
+        InstagramDownloadService instagramService,
         ILogger<ConversationHandler> logger)
     {
         _sessionManager = sessionManager;
         _downloadService = downloadService;
+        _instagramService = instagramService;
         _logger = logger;
     }
 
@@ -65,15 +68,18 @@ public sealed class ConversationHandler
     {
         if (!Uri.TryCreate(input, UriKind.Absolute, out var uri))
         {
-            await bot.SendMessage(chatId, "Please send a valid YouTube URL (starts with https://)", cancellationToken: ct);
+            await bot.SendMessage(chatId, "Please send a valid URL (starts with https://)", cancellationToken: ct);
             return;
         }
 
-        if (!IsYouTubeUrl(uri))
+        var isInstagram = IsInstagramUrl(uri);
+        if (!IsYouTubeUrl(uri) && !isInstagram)
         {
-            await bot.SendMessage(chatId, "Please send a valid YouTube URL (e.g. https://youtube.com/watch?v=...)", cancellationToken: ct);
+            await bot.SendMessage(chatId, "Please send a valid YouTube or Instagram URL.", cancellationToken: ct);
             return;
         }
+
+        session.Platform = isInstagram ? SourcePlatform.Instagram : SourcePlatform.YouTube;
 
         var isPlaylist = IsPlaylistUrl(uri);
         session.IsPlaylist = isPlaylist;
@@ -112,15 +118,24 @@ public sealed class ConversationHandler
 
         try
         {
-            var info = await _downloadService.GetVideoInfoAsync(urlForInfo, ct);
+            VideoInfo info;
+            if (session.Platform == SourcePlatform.Instagram)
+            {
+                info = await _instagramService.GetInfoAsync(urlForInfo, ct);
+            }
+            else
+            {
+                info = await _downloadService.GetVideoInfoAsync(urlForInfo, ct);
+            }
+
             session.VideoTitle = info.Title;
             session.VideoOptions = info.VideoOptions;
             session.AudioOptions = info.AudioOptions;
 
             var typeKeyboard = new InlineKeyboardMarkup(new[]
             {
-                new[] 
-                { 
+                new[]
+                {
                     InlineKeyboardButton.WithCallbackData("📹 Video", "type:video"),
                     InlineKeyboardButton.WithCallbackData("🎵 Audio Only", "type:audio")
                 }
@@ -141,7 +156,7 @@ public sealed class ConversationHandler
         }
         catch (ArgumentException)
         {
-            await bot.SendMessage(chatId, "Invalid YouTube URL. Please make sure it's a valid YouTube video or playlist link.", cancellationToken: ct);
+            await bot.SendMessage(chatId, "Invalid URL. Please make sure it's a valid YouTube video/playlist or Instagram link.", cancellationToken: ct);
         }
         catch (HttpRequestException ex)
         {
@@ -156,6 +171,17 @@ public sealed class ConversationHandler
                 "• Ubuntu/Debian: <code>sudo apt install ffmpeg</code>\n" +
                 "• Alpine: <code>apk add ffmpeg</code>\n" +
                 "• Or use the Docker image which includes it.",
+                parseMode: ParseMode.Html,
+                cancellationToken: ct);
+            session.CurrentStep = DownloadStep.Error;
+            _sessionManager.UpdateSession(session);
+        }
+        catch (Exception ex) when (ex.Message.Contains("yt-dlp", StringComparison.OrdinalIgnoreCase))
+        {
+            await bot.SendMessage(chatId,
+                "⚠️ <b>yt-dlp not found</b>\n\n" +
+                "Instagram downloads require yt-dlp to be installed on the server.\n" +
+                "Install: <code>pip install yt-dlp</code> or <code>brew install yt-dlp</code>",
                 parseMode: ParseMode.Html,
                 cancellationToken: ct);
             session.CurrentStep = DownloadStep.Error;
@@ -242,8 +268,8 @@ public sealed class ConversationHandler
         {
             var confirmKeyboard = new InlineKeyboardMarkup(new[]
             {
-                new[] 
-                { 
+                new[]
+                {
                     InlineKeyboardButton.WithCallbackData("✅ Continue", "confirm:yes"),
                     InlineKeyboardButton.WithCallbackData("❌ Cancel", "confirm:no")
                 }
@@ -288,7 +314,7 @@ public sealed class ConversationHandler
         {
             if (session.CurrentStep != DownloadStep.WaitingForType)
             {
-                await bot.SendMessage(chatId, "Please send a YouTube URL first, then select the type.", cancellationToken: ct);
+                await bot.SendMessage(chatId, "Please send a YouTube or Instagram URL first, then select the type.", cancellationToken: ct);
                 return;
             }
 
@@ -353,7 +379,11 @@ public sealed class ConversationHandler
         var option = session.VideoOptions[session.SelectedQualityIndex];
         var title = session.VideoTitle ?? "video";
 
-        if (session.IsPlaylist && session.VideoOptions.Count > 0)
+        if (session.Platform == SourcePlatform.Instagram)
+        {
+            await HandleInstagramDownload(bot, chatId, session, false, title, ct);
+        }
+        else if (session.IsPlaylist && session.VideoOptions.Count > 0)
         {
             await HandlePlaylistVideoDownload(bot, chatId, session, option, title, ct);
         }
@@ -518,6 +548,62 @@ public sealed class ConversationHandler
         }
     }
 
+    private async Task HandleInstagramDownload(
+        ITelegramBotClient bot,
+        long chatId,
+        UserDownloadSession session,
+        bool isAudio,
+        string title,
+        CancellationToken ct)
+    {
+        var emoji = isAudio ? "🎵" : "📥";
+        var progressMessage = await bot.SendMessage(chatId, $"{emoji} Downloading from Instagram...", cancellationToken: ct);
+
+        try
+        {
+            var result = await _instagramService.DownloadAsync(session.Url!, title, isAudio, ct);
+
+            var filePath = result.FilePath;
+            var fileInfo = new FileInfo(filePath);
+            if (fileInfo.Length > 50 * 1024 * 1024)
+            {
+                await bot.EditMessageText(chatId, progressMessage.MessageId,
+                    $"❌ <b>File too large for Telegram:</b> {fileInfo.Length / 1024 / 1024} MB\n" +
+                    "Telegram bots have a 50MB file size limit.",
+                    parseMode: ParseMode.Html, cancellationToken: ct);
+                session.CurrentStep = DownloadStep.Error;
+                _sessionManager.UpdateSession(session);
+                return;
+            }
+
+            await using var fileStream = File.OpenRead(filePath);
+            await bot.DeleteMessage(chatId, progressMessage.MessageId, ct);
+
+            if (isAudio)
+            {
+                await bot.SendAudio(chatId, InputFile.FromStream(fileStream, Path.GetFileName(filePath)), title: EscapeHtml(title), cancellationToken: ct);
+            }
+            else
+            {
+                await bot.SendVideo(chatId, InputFile.FromStream(fileStream, Path.GetFileName(filePath)), caption: $"✅ {EscapeHtml(title)}", supportsStreaming: true, cancellationToken: ct);
+            }
+
+            session.CurrentStep = DownloadStep.Done;
+            _sessionManager.UpdateSession(session);
+
+            try { File.Delete(filePath); } catch { }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Instagram download failed");
+            await bot.EditMessageText(chatId, progressMessage.MessageId,
+                $"❌ <b>Download failed:</b>\n<code>{EscapeHtml(ex.Message)}</code>\n\nSend /start to try again.",
+                parseMode: ParseMode.Html, cancellationToken: ct);
+            session.CurrentStep = DownloadStep.Error;
+            _sessionManager.UpdateSession(session);
+        }
+    }
+
     private async Task StartAudioDownload(ITelegramBotClient bot, long chatId, UserDownloadSession session, CancellationToken ct)
     {
         if (session.Url == null || session.AudioOptions == null || session.SelectedQualityIndex < 0)
@@ -529,7 +615,11 @@ public sealed class ConversationHandler
         var option = session.AudioOptions[session.SelectedQualityIndex];
         var title = session.VideoTitle ?? "audio";
 
-        if (session.IsPlaylist)
+        if (session.Platform == SourcePlatform.Instagram)
+        {
+            await HandleInstagramDownload(bot, chatId, session, true, title, ct);
+        }
+        else if (session.IsPlaylist)
         {
             await HandlePlaylistAudioDownload(bot, chatId, session, option, title, ct);
         }
@@ -763,6 +853,12 @@ public sealed class ConversationHandler
         return false;
     }
 
+    private static bool IsInstagramUrl(Uri uri)
+    {
+        var host = uri.Host.ToLowerInvariant();
+        return host.Contains("instagram.com");
+    }
+
     private static bool IsYouTubeUrl(Uri uri)
     {
         var host = uri.Host.ToLowerInvariant();
@@ -770,5 +866,5 @@ public sealed class ConversationHandler
     }
 
     private static string EscapeHtml(string text) =>
-        text.Replace("&", "&").Replace("<", "<").Replace(">", ">");
+        text.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;");
 }
