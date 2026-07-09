@@ -77,10 +77,6 @@ public sealed class BotUpdateRouter
                         await HandleStatusAsync(bot, chatId, userId, ct);
                         return;
 
-                    case "/checkffmpeg":
-                        await HandleCheckFfmpegAsync(bot, chatId, ct);
-                        return;
-
                     default:
                         await bot.SendMessage(chatId,
                             "<b>Unknown command.</b>\n\nSend /help to see available commands.",
@@ -117,7 +113,7 @@ public sealed class BotUpdateRouter
 
         var keyboard = new InlineKeyboardMarkup(new[]
         {
-            new[] { InlineKeyboardButton.WithCallbackData("ℹ️ Help", "cmd:help"), InlineKeyboardButton.WithCallbackData("🔧 Check FFmpeg", "cmd:checkffmpeg") }
+            new[] { InlineKeyboardButton.WithCallbackData("ℹ️ Help", "cmd:help") }
         });
 
         await bot.SendMessage(chatId,
@@ -143,8 +139,6 @@ public sealed class BotUpdateRouter
               /help         - Show this help message
               /cancel       - Cancel current operation
               /status       - Check current session status
-              /checkffmpeg  - Verify FFmpeg installation
-
             <b>How to use:</b>
             1. Send a YouTube or Instagram URL
             2. Choose: Video (MP4) or Audio (MP3)
@@ -155,19 +149,14 @@ public sealed class BotUpdateRouter
             • YouTube videos, playlists, shorts
             • Instagram posts, reels
 
-            <b>Quality Options:</b>
-            • <b>Muxed streams</b> (≤720p) - Video+audio combined, no FFmpeg needed
-            • <b>Adaptive streams</b> (1080p+) - Separate video/audio, FFmpeg required
-
             <b>Format:</b>
             • Videos: Always MP4
-            • Audio: Always MP3 (converted via FFmpeg)
+            • Audio: Always MP3
 
             <b>Limits:</b>
             • Telegram bot file limit: 50 MB
             • Large files may not be sendable
 
-            <b>Note:</b> FFmpeg must be installed on the server for high-quality downloads and audio conversion. yt-dlp must be installed for Instagram downloads.
             """;
 
         await bot.SendMessage(chatId, helpMessage, parseMode: ParseMode.Html, cancellationToken: ct);
@@ -209,58 +198,6 @@ public sealed class BotUpdateRouter
             parseMode: ParseMode.Html, cancellationToken: ct);
     }
 
-    private async Task HandleCheckFfmpegAsync(ITelegramBotClient bot, long chatId, CancellationToken ct)
-    {
-        await bot.SendMessage(chatId, "🔧 Checking FFmpeg installation...", cancellationToken: ct);
-
-        var hasFfmpeg = await _downloadService.CheckDependenciesAsync();
-
-        if (hasFfmpeg)
-        {
-            // Get version
-            string version = "Unknown";
-            try
-            {
-                var process = new System.Diagnostics.Process
-                {
-                    StartInfo = new System.Diagnostics.ProcessStartInfo
-                    {
-                        FileName = "ffmpeg",
-                        Arguments = "-version",
-                        RedirectStandardOutput = true,
-                        UseShellExecute = false,
-                        CreateNoWindow = true
-                    }
-                };
-                process.Start();
-                var output = await process.StandardOutput.ReadLineAsync();
-                await process.WaitForExitAsync();
-                version = output ?? "Unknown";
-            }
-            catch { }
-
-            await bot.SendMessage(chatId,
-                $"✅ <b>FFmpeg is installed and working!</b>\n\n" +
-                $"<code>{EscapeHtml(version)}</code>\n\n" +
-                "High-quality video downloads (1080p+) and audio conversion to MP3 are available.",
-                parseMode: ParseMode.Html, cancellationToken: ct);
-        }
-        else
-        {
-            await bot.SendMessage(chatId,
-                "❌ <b>FFmpeg NOT FOUND</b>\n\n" +
-                "FFmpeg is required for:\n" +
-                "• Downloading 1080p, 1440p, 4K videos\n" +
-                "• Converting audio to MP3\n" +
-                "• Merging video + audio streams\n\n" +
-                "<b>Install FFmpeg:</b>\n" +
-                "• Ubuntu/Debian: <code>sudo apt update && sudo apt install ffmpeg</code>\n" +
-                "• Alpine: <code>apk add ffmpeg</code>\n" +
-                "• Docker: Use the provided Dockerfile which includes FFmpeg\n\n" +
-                "Without FFmpeg, only muxed streams (≤720p) can be downloaded.",
-                parseMode: ParseMode.Html, cancellationToken: ct);
-        }
-    }
 
     private async Task HandleCallbackQueryAsync(ITelegramBotClient bot, CallbackQuery callback, CancellationToken ct)
     {
@@ -281,9 +218,6 @@ public sealed class BotUpdateRouter
             {
                 case "help":
                     await HandleHelpAsync(bot, chatId, ct);
-                    break;
-                case "checkffmpeg":
-                    await HandleCheckFfmpegAsync(bot, chatId, ct);
                     break;
             }
         }

@@ -37,19 +37,6 @@ var app = builder.Build();
 
 app.UseSerilogRequestLogging();
 
-// Check FFmpeg on startup
-var downloadService = app.Services.GetRequiredService<YouTubeDownloadService>();
-var ffmpegAvailable = await downloadService.CheckDependenciesAsync();
-if (!ffmpegAvailable)
-{
-    Log.Warning("FFmpeg not found in PATH. Video merging and audio conversion will not work!");
-    Log.Warning("Install FFmpeg: apt-get install ffmpeg (Debian/Ubuntu) or apk add ffmpeg (Alpine)");
-}
-else
-{
-    Log.Information("FFmpeg found and available");
-}
-
 var botClient = app.Services.GetRequiredService<ITelegramBotClient>();
 var cts = new CancellationTokenSource();
 

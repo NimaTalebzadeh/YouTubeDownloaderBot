@@ -162,20 +162,6 @@ public sealed class ConversationHandler
         {
             await bot.SendMessage(chatId, $"Network error: {ex.Message}\n\nTry again later.", cancellationToken: ct);
         }
-        catch (Exception ex) when (ex.Message.Contains("ffmpeg", StringComparison.OrdinalIgnoreCase))
-        {
-            await bot.SendMessage(chatId,
-                "⚠️ <b>FFmpeg not found</b>\n\n" +
-                "This bot requires FFmpeg to merge video and audio streams and convert to MP3.\n" +
-                "Please install FFmpeg on the server:\n" +
-                "• Ubuntu/Debian: <code>sudo apt install ffmpeg</code>\n" +
-                "• Alpine: <code>apk add ffmpeg</code>\n" +
-                "• Or use the Docker image which includes it.",
-                parseMode: ParseMode.Html,
-                cancellationToken: ct);
-            session.CurrentStep = DownloadStep.Error;
-            _sessionManager.UpdateSession(session);
-        }
         catch (Exception ex) when (ex.Message.Contains("yt-dlp", StringComparison.OrdinalIgnoreCase))
         {
             await bot.SendMessage(chatId,
@@ -213,9 +199,7 @@ public sealed class ConversationHandler
             var keyboard = BuildVideoQualityKeyboard(session.VideoOptions);
             
             await bot.SendMessage(chatId,
-                "<b>Select video quality:</b>\n\n" +
-                "Note: Qualities marked [FFmpeg required] need FFmpeg to merge video+audio.\n" +
-                "Higher qualities (1080p+) always require FFmpeg.",
+                "<b>Select video quality:</b>",
                 parseMode: ParseMode.Html,
                 replyMarkup: keyboard,
                 cancellationToken: ct);
