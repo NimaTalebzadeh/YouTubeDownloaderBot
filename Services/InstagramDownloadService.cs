@@ -51,9 +51,17 @@ public sealed class InstagramDownloadService
             : "Instagram";
 
         TimeSpan? duration = null;
-        if (root.TryGetProperty("duration", out var durationProp) && durationProp.ValueKind == System.Text.Json.JsonValueKind.Number)
+        if (root.TryGetProperty("duration", out var durationProp))
         {
-            duration = TimeSpan.FromSeconds(durationProp.GetDouble());
+            if (durationProp.ValueKind == System.Text.Json.JsonValueKind.Number)
+            {
+                duration = TimeSpan.FromSeconds(durationProp.GetDouble());
+            }
+            else if (durationProp.ValueKind == System.Text.Json.JsonValueKind.String
+                     && double.TryParse(durationProp.GetString(), out var durationSeconds))
+            {
+                duration = TimeSpan.FromSeconds(durationSeconds);
+            }
         }
 
         var videoOptions = new List<VideoQualityOption>();
