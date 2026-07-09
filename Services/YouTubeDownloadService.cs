@@ -53,8 +53,9 @@ public sealed class YouTubeDownloadService
     public async Task<List<string>> SplitVideoAsync(string inputPath, CancellationToken ct)
     {
         var outputPattern = Path.Combine(_tempDirectory, $"part_{Guid.NewGuid()}_%03d.mp4");
-        // Split into ~50MB segments using segment time (2 minutes per segment)
-        var args = $"-i \"{inputPath}\" -c copy -map 0 -segment_time 00:02:00 -f segment \"{outputPattern}\"";
+        // Split into smaller sequential segments to stay safely under Telegram's 50MB limit.
+        // reset_timestamps improves playback compatibility for individual chunks.
+        var args = $"-i \"{inputPath}\" -c copy -map 0 -f segment -segment_time 00:00:45 -reset_timestamps 1 \"{outputPattern}\"";
         
         var process = new Process
         {
@@ -79,7 +80,10 @@ public sealed class YouTubeDownloadService
         }
 
         var guid = Path.GetFileNameWithoutExtension(outputPattern).Split('_')[1];
-        return Directory.GetFiles(_tempDirectory, $"part_{guid}_*.mp4").ToList();
+        return Directory
+            .GetFiles(_tempDirectory, $"part_{guid}_*.mp4")
+            .OrderBy(path => path, StringComparer.Ordinal)
+            .ToList();
     }
 
     public async Task<VideoInfo> GetVideoInfoAsync(string url, CancellationToken ct)
