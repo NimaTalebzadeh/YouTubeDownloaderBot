@@ -248,34 +248,7 @@ public sealed class ConversationHandler
         session.SelectedQualityIndex = index;
         var option = session.VideoOptions![index];
 
-        if (option.NeedsFFmpeg)
-        {
-            var confirmKeyboard = new InlineKeyboardMarkup(new[]
-            {
-                new[]
-                {
-                    InlineKeyboardButton.WithCallbackData("✅ Continue", "confirm:yes"),
-                    InlineKeyboardButton.WithCallbackData("❌ Cancel", "confirm:no")
-                }
-            });
-
-            await bot.SendMessage(chatId,
-                $"<b>Selected:</b> {option.Label}\n\n" +
-                "⚠️ <b>FFmpeg Required</b>\n" +
-                "This quality requires FFmpeg to merge the video and audio streams.\n" +
-                "Make sure FFmpeg is installed on the server.\n\n" +
-                "Continue with download?",
-                parseMode: ParseMode.Html,
-                replyMarkup: confirmKeyboard,
-                cancellationToken: ct);
-
-            session.CurrentStep = DownloadStep.Downloading;
-            _sessionManager.UpdateSession(session);
-        }
-        else
-        {
-            await StartVideoDownload(bot, chatId, session, ct);
-        }
+        await StartVideoDownload(bot, chatId, session, ct);
     }
 
     private async Task HandleAudioQualityStep(ITelegramBotClient bot, long chatId, UserDownloadSession session, string input, CancellationToken ct)
