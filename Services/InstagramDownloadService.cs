@@ -63,10 +63,14 @@ public sealed class InstagramDownloadService
             var addedHeights = new HashSet<int>();
 
             foreach (var format in formatsProp.EnumerateArray()
-                         .Where(f => f.TryGetProperty("height", out _))
+                         .Where(f => f.TryGetProperty("height", out var h) && h.ValueKind == System.Text.Json.JsonValueKind.Number)
                          .OrderByDescending(f => f.GetProperty("height").GetInt32()))
             {
-                var height = format.GetProperty("height").GetInt32();
+                var heightProp = format.GetProperty("height");
+                if (heightProp.ValueKind != System.Text.Json.JsonValueKind.Number)
+                    continue;
+
+                var height = heightProp.GetInt32();
                 if (height <= 0 || !addedHeights.Add(height))
                     continue;
 
