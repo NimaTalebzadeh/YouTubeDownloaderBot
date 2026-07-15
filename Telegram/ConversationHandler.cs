@@ -357,14 +357,18 @@ public sealed class ConversationHandler
         string title, 
         CancellationToken ct)
     {
-        var progressMessage = await bot.SendMessage(chatId, "📥 Downloading... 0%", cancellationToken: ct);
+        var progressMessage = await bot.SendMessage(chatId, "📥 Downloading video stream...", cancellationToken: ct);
         var progress = new Progress<double>(p => 
         {
             _ = Task.Run(async () =>
             {
                 try
                 {
-                    await bot.EditMessageText(chatId, progressMessage.MessageId, $"📥 Downloading... {p:P0}");
+                    var msg = p < 0.8 ? $"📥 Downloading video stream... {p / 0.8 * 100:F0}%"
+                        : p < 0.9 ? $"📥 Downloading audio stream... {(p - 0.8) / 0.1 * 100:F0}%"
+                        : p < 1.0 ? "🔧 Converting & muxing..."
+                        : "📦 Preparing file...";
+                    await bot.EditMessageText(chatId, progressMessage.MessageId, msg);
                 }
                 catch { }
             });
@@ -382,9 +386,9 @@ public sealed class ConversationHandler
 
             var filePath = result.FilePath;
             var fileInfo = new FileInfo(filePath);
-            if (fileInfo.Length > 50 * 1024 * 1024)
+            if (fileInfo.Length > 48 * 1024 * 1024)
             {
-                await bot.EditMessageText(chatId, progressMessage.MessageId, "⚠️ File > 50MB, splitting into parts...", cancellationToken: ct);
+                await bot.EditMessageText(chatId, progressMessage.MessageId, "⚠️ File > 48MB, splitting into parts...", cancellationToken: ct);
                 var parts = await _downloadService.SplitVideoAsync(filePath, ct);
                 
                 foreach (var part in parts)
@@ -406,8 +410,8 @@ public sealed class ConversationHandler
             }
             else
             {
-                await using var fileStream = File.OpenRead(filePath);
                 await bot.DeleteMessage(chatId, progressMessage.MessageId, ct);
+                await using var fileStream = File.OpenRead(filePath);
                 await bot.SendVideo(
                     chatId,
                     InputFile.FromStream(fileStream, Path.GetFileName(filePath)),
@@ -676,14 +680,17 @@ public sealed class ConversationHandler
         string title, 
         CancellationToken ct)
     {
-        var progressMessage = await bot.SendMessage(chatId, "🎵 Downloading audio... 0%", cancellationToken: ct);
+        var progressMessage = await bot.SendMessage(chatId, "🎵 Downloading audio stream...", cancellationToken: ct);
         var progress = new Progress<double>(p => 
         {
             _ = Task.Run(async () =>
             {
                 try
                 {
-                    await bot.EditMessageText(chatId, progressMessage.MessageId, $"🎵 Downloading audio... {p:P0}");
+                    var msg = p < 0.8 ? $"🎵 Downloading audio stream... {p / 0.8 * 100:F0}%"
+                        : p < 1.0 ? "🔧 Converting to MP3..."
+                        : "📦 Preparing file...";
+                    await bot.EditMessageText(chatId, progressMessage.MessageId, msg);
                 }
                 catch { }
             });
@@ -701,9 +708,9 @@ public sealed class ConversationHandler
 
             var filePath = result.FilePath;
             var fileInfo = new FileInfo(filePath);
-            if (fileInfo.Length > 50 * 1024 * 1024)
+            if (fileInfo.Length > 48 * 1024 * 1024)
             {
-                await bot.EditMessageText(chatId, progressMessage.MessageId, "⚠️ File > 50MB, splitting into parts...", cancellationToken: ct);
+                await bot.EditMessageText(chatId, progressMessage.MessageId, "⚠️ File > 48MB, splitting into parts...", cancellationToken: ct);
                 var parts = await _downloadService.SplitVideoAsync(filePath, ct);
 
                 foreach (var part in parts)
@@ -724,8 +731,8 @@ public sealed class ConversationHandler
             }
             else
             {
-                await using var fileStream = File.OpenRead(filePath);
                 await bot.DeleteMessage(chatId, progressMessage.MessageId, ct);
+                await using var fileStream = File.OpenRead(filePath);
                 await bot.SendAudio(
                     chatId,
                     InputFile.FromStream(fileStream, Path.GetFileName(filePath)),

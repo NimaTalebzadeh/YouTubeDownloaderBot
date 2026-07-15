@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Net.Http;
 using YoutubeExplode;
 using YoutubeExplode.Common;
 using YoutubeExplode.Converter;
@@ -60,14 +61,9 @@ public sealed class YouTubeDownloadService
             return new List<string> { inputPath };
 
         var guid = Guid.NewGuid();
-        var outputPattern = Path.Combine(_tempDirectory, $"part_{guid}_%03d.mp4");
+        var outputPattern = Path.Combine(_tempDirectory, $"part_{guid}_%03d{Path.GetExtension(inputPath)}");
 
         // Split by keyframe before 49MB per segment (under Telegram's 50MB limit)
-        // -fs 49M : stop writing after ~49MB
-        // -f segment : segment muxer
-        // -c copy : no re-encode (fast)
-        // -map 0 : all streams
-        // -reset_timestamps 1 : each part starts at 0
         var args = $"-i \"{inputPath}\" -c copy -map 0 -f segment -segment_time 10:00:00 -fs 49M -reset_timestamps 1 \"{outputPattern}\"";
 
         var process = new Process
@@ -93,7 +89,7 @@ public sealed class YouTubeDownloadService
         }
 
         return Directory
-            .GetFiles(_tempDirectory, $"part_{guid}_*.mp4")
+            .GetFiles(_tempDirectory, $"part_{guid}_*")
             .OrderBy(path => path, StringComparer.Ordinal)
             .ToList();
     }
@@ -158,16 +154,47 @@ public sealed class YouTubeDownloadService
 
             var audioStream = manifest.GetAudioOnlyStreams().GetWithHighestBitrate();
 
-            var request = new ConversionRequestBuilder(outputPath)
-                .SetContainer(Container.Mp4)
-                .SetPreset(ConversionPreset.UltraFast)
-                .Build();
+            // Step 1: Download video-only stream with progress
+            var rawVideoPath = Path.Combine(_tempDirectory, $"raw_video_{Guid.NewGuid()}.mp4");
+            var videoProgress = new Progress<double>(p => progress?.Report(p * 0.8)); // 0-80%
+            await _youtube.Videos.Streams.DownloadAsync(videoStream, rawVideoPath, videoProgress, ct);
 
-            await _youtube.Videos.DownloadAsync(
-                new IStreamInfo[] { videoStream, audioStream },
-                request,
-                progress,
-                ct);
+            // Step 2: Download audio-only stream
+            var rawAudioPath = Path.Combine(_tempDirectory, $"raw_audio_{Guid.NewGuid()}.mp4");
+            var audioProgress = new Progress<double>(p => progress?.Report(0.8 + p * 0.1)); // 80-90%
+            await _youtube.Videos.Streams.DownloadAsync(audioStream, rawAudioPath, audioProgress, ct);
+
+            // Report conversion phase
+            progress?.Report(0.9);
+
+            // Step 3: Mux with FFmpeg
+            var ffmpegArgs = $"-i \"{rawVideoPath}\" -i \"{rawAudioPath}\" -c copy -map 0:v:0 -map 1:a:0 -movflags +faststart \"{outputPath}\"";
+            var process = new Process
+            {
+                StartInfo = new ProcessStartInfo
+                {
+                    FileName = "ffmpeg",
+                    Arguments = ffmpegArgs,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                }
+            };
+            process.Start();
+            await process.WaitForExitAsync(ct);
+
+            if (process.ExitCode != 0)
+            {
+                var error = await process.StandardError.ReadToEndAsync(ct);
+                throw new Exception($"FFmpeg muxing failed: {error}");
+            }
+
+            // Cleanup raw files
+            try { File.Delete(rawVideoPath); } catch { }
+            try { File.Delete(rawAudioPath); } catch { }
+            
+            progress?.Report(1.0);
         }
         else
         {
@@ -208,16 +235,39 @@ public sealed class YouTubeDownloadService
         var fileName = SanitizeFileName(title) + ".mp3";
         var outputPath = Path.Combine(_tempDirectory, fileName);
 
-        var request = new ConversionRequestBuilder(outputPath)
-            .SetContainer(new Container("mp3"))
-            .SetPreset(ConversionPreset.UltraFast)
-            .Build();
+        // Step 1: Download raw audio stream with progress
+        var rawAudioPath = Path.Combine(_tempDirectory, $"raw_audio_{Guid.NewGuid()}.mp4");
+        var audioProgress = new Progress<double>(p => progress?.Report(p * 0.8)); // 0-80%
+        await _youtube.Videos.Streams.DownloadAsync(stream, rawAudioPath, audioProgress, ct);
 
-        await _youtube.Videos.DownloadAsync(
-            new IStreamInfo[] { stream },
-            request,
-            progress,
-            ct);
+        // Report conversion phase
+        progress?.Report(0.85);
+
+        // Step 2: Convert to MP3 with FFmpeg
+        var ffmpegArgs = $"-i \"{rawAudioPath}\" -vn -codec:a libmp3lame -q:a 2 \"{outputPath}\"";
+        var process = new Process
+        {
+            StartInfo = new ProcessStartInfo
+            {
+                FileName = "ffmpeg",
+                Arguments = ffmpegArgs,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            }
+        };
+        process.Start();
+        await process.WaitForExitAsync(ct);
+
+        if (process.ExitCode != 0)
+        {
+            var error = await process.StandardError.ReadToEndAsync(ct);
+            throw new Exception($"FFmpeg audio conversion failed: {error}");
+        }
+
+        // Cleanup raw file
+        try { File.Delete(rawAudioPath); } catch { }
 
         await _cache.StoreAsync(outputPath, url, "audio", qualityKey, fileName);
         return new DownloadResult(outputPath, FromCache: false);
