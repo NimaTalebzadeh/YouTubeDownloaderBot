@@ -74,13 +74,13 @@ public sealed class YouTubeDownloadService
         string args;
         if (ext is ".mp3")
         {
-            // ~8 min per part at 128kbps ≈ 12MB — safe for Telegram
-            args = $"-i \"{inputPath}\" -c copy -f segment -segment_time 00:08:00 -copyts -reset_timestamps 1 \"{outputPattern}\"";
+            // Split by size (~45MB per part), with generous max time as safety net
+            args = $"-i \"{inputPath}\" -c copy -f segment -segment_time 30:00:00 -fs 45M -copyts -reset_timestamps 1 \"{outputPattern}\"";
         }
         else if (ext is ".m4a" or ".ogg" or ".wav" or ".flac")
         {
-            // Other audio formats — use re-encode but fast preset
-            args = $"-i \"{inputPath}\" -map 0 -f segment -segment_time 00:08:00 -c:a aac -b:a 128k -reset_timestamps 1 \"{outputPattern}\"";
+            // Split by size (~45MB per part), re-encode with AAC
+            args = $"-i \"{inputPath}\" -map 0 -f segment -segment_time 30:00:00 -fs 45M -c:a aac -b:a 128k -reset_timestamps 1 \"{outputPattern}\"";
         }
         else
         {
