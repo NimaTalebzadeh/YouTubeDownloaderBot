@@ -386,9 +386,9 @@ public sealed class ConversationHandler
 
             var filePath = result.FilePath;
             var fileInfo = new FileInfo(filePath);
-            if (fileInfo.Length > 48 * 1024 * 1024)
+            if (fileInfo.Length > 44 * 1024 * 1024)
             {
-                await bot.EditMessageText(chatId, progressMessage.MessageId, "⚠️ File > 48MB, splitting into parts...", cancellationToken: ct);
+                await bot.EditMessageText(chatId, progressMessage.MessageId, "⚠️ File > 44MB, splitting into parts...", cancellationToken: ct);
                 var parts = await _downloadService.SplitVideoAsync(filePath, ct);
                 
                 foreach (var part in parts)
@@ -708,9 +708,9 @@ public sealed class ConversationHandler
 
             var filePath = result.FilePath;
             var fileInfo = new FileInfo(filePath);
-            if (fileInfo.Length > 48 * 1024 * 1024)
+            if (fileInfo.Length > 44 * 1024 * 1024)
             {
-                await bot.EditMessageText(chatId, progressMessage.MessageId, "⚠️ File > 48MB, splitting into parts...", cancellationToken: ct);
+                await bot.EditMessageText(chatId, progressMessage.MessageId, "⚠️ File > 44MB, splitting into parts...", cancellationToken: ct);
                 var parts = await _downloadService.SplitVideoAsync(filePath, ct);
 
                 foreach (var part in parts)

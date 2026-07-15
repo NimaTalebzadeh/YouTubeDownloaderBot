@@ -17,6 +17,11 @@ public sealed class YouTubeDownloadService
     private readonly DownloadCacheService _cache;
     private readonly ILogger<YouTubeDownloadService> _logger;
 
+    // Telegram Bot API has a 50MB upload limit. With multipart encoding overhead,
+    // we use 45MB as a safe upper bound for each part.
+    private const long MaxPartSize = 45 * 1024 * 1024; // 45 MB
+    private const long MaxPartSizeNoSplit = 44 * 1024 * 1024; // 44 MB
+
     public YouTubeDownloadService(DownloadCacheService cache, ILogger<YouTubeDownloadService> logger)
     {
         var httpClient = new HttpClient
@@ -61,31 +66,30 @@ public sealed class YouTubeDownloadService
         var fileInfo = new FileInfo(inputPath);
         var totalSizeMb = fileInfo.Length / 1_048_576.0;
         
-        // If total is <= 49MB (under Telegram's 50MB limit), no split needed
-        if (totalSizeMb <= 49)
+        // If total is <= MaxPartSizeNoSplit, no split needed (safe for Telegram)
+        if (fileInfo.Length <= MaxPartSizeNoSplit)
             return new List<string> { inputPath };
 
         var ext = Path.GetExtension(inputPath).ToLowerInvariant();
         var guid = Guid.NewGuid();
         var outputPattern = Path.Combine(_tempDirectory, $"part_{guid}_%03d{ext}");
 
-        // For audio: split by time only (no size limit, no re-encode)
-        // segment muxer + -c copy works fine with MP3 using -copyts
+        // MaxPartSize (~45MB) per segment
         string args;
         if (ext is ".mp3")
         {
-            // Split by size (~45MB per part), with generous max time as safety net
-            args = $"-i \"{inputPath}\" -c copy -f segment -segment_time 30:00:00 -fs 45M -copyts -reset_timestamps 1 \"{outputPattern}\"";
+            // Split by size, copy codec (no re-encode)
+            args = $"-i \"{inputPath}\" -c copy -f segment -segment_time 30:00:00 -fs {MaxPartSize / 1_048_576}M -copyts -reset_timestamps 1 \"{outputPattern}\"";
         }
         else if (ext is ".m4a" or ".ogg" or ".wav" or ".flac")
         {
-            // Split by size (~45MB per part), re-encode with AAC
-            args = $"-i \"{inputPath}\" -map 0 -f segment -segment_time 30:00:00 -fs 45M -c:a aac -b:a 128k -reset_timestamps 1 \"{outputPattern}\"";
+            // Split by size, re-encode with AAC
+            args = $"-i \"{inputPath}\" -map 0 -f segment -segment_time 30:00:00 -fs {MaxPartSize / 1_048_576}M -c:a aac -b:a 128k -reset_timestamps 1 \"{outputPattern}\"";
         }
         else
         {
-            // Video: split by keyframe before 49MB per segment
-            args = $"-i \"{inputPath}\" -c copy -map 0 -f segment -segment_time 10:00:00 -fs 49M -reset_timestamps 1 \"{outputPattern}\"";
+            // Video: split by size with copy codec
+            args = $"-i \"{inputPath}\" -c copy -map 0 -f segment -segment_time 10:00:00 -fs {MaxPartSize / 1_048_576}M -reset_timestamps 1 \"{outputPattern}\"";
         }
 
         var process = new Process
