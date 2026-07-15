@@ -111,21 +111,9 @@ public sealed class BotUpdateRouter
         var session = _sessionManager.GetOrCreateSession(userId);
         session.CurrentStep = DownloadStep.WaitingForUrl;
 
-        var keyboard = new InlineKeyboardMarkup(new[]
-        {
-            new[] { InlineKeyboardButton.WithCallbackData("ℹ️ Help", "cmd:help") }
-        });
-
         await bot.SendMessage(chatId,
-            "<b>🎬 YouTube & Instagram Downloader Bot</b>\n\n" +
-            "Send me a <b>YouTube</b> or <b>Instagram</b> URL and I'll help you download it.\n\n" +
-            "<b>Features:</b>\n" +
-            "• Download videos/audio from YouTube\n" +
-            "• Download posts from Instagram\n" +
-            "• Playlist support (YouTube)\n\n" +
-            "<b>Just send a link to begin!</b>",
+            "Send me a YouTube or Instagram link.",
             parseMode: ParseMode.Html,
-            replyMarkup: keyboard,
             cancellationToken: ct);
     }
 
