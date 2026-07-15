@@ -32,7 +32,7 @@ public sealed class ConversationHandler
         var session = _sessionManager.GetOrCreateSession(userId);
         session.LastActivity = DateTime.UtcNow;
 
-        if (session.CurrentStep is DownloadStep.Downloading or DownloadStep.Done or DownloadStep.Error)
+        if (session.CurrentStep is DownloadStep.Downloading or DownloadStep.Error)
             return;
 
         try
@@ -145,8 +145,7 @@ public sealed class ConversationHandler
                 ? $"<b>Playlist:</b> {EscapeHtml(session.VideoTitle ?? info.Title)}\n<b>Videos:</b> {info.VideoOptions.Count} quality options\n\n"
                 : $"<b>Video:</b> {EscapeHtml(info.Title)}\n<b>Channel:</b> {EscapeHtml(info.Author)}\n<b>Duration:</b> {info.Duration?.ToString(@"hh\:mm\:ss") ?? "Unknown"}\n\n";
 
-            await bot.SendMessage(chatId,
-                infoMsg + "What would you like to download?",
+            await bot.SendMessage(chatId, infoMsg + "What would you like to download?",
                 parseMode: ParseMode.Html,
                 replyMarkup: typeKeyboard,
                 cancellationToken: ct);
@@ -417,8 +416,12 @@ public sealed class ConversationHandler
                     cancellationToken: ct);
             }
 
-            session.CurrentStep = DownloadStep.Done;
+            session.CurrentStep = DownloadStep.WaitingForUrl;
             _sessionManager.UpdateSession(session);
+
+            await bot.SendMessage(chatId,
+                $"✅ <b>Download complete!</b>\n\nSend another YouTube or Instagram link to continue, or send /cancel.\n\n<b>{EscapeHtml(title)}</b> has been sent.",
+                parseMode: ParseMode.Html, cancellationToken: ct);
 
             // Clean up the temp working file only — never delete a cached copy.
             if (!result.FromCache)
@@ -523,10 +526,10 @@ public sealed class ConversationHandler
             await bot.SendMessage(chatId,
                 $"✅ <b>Playlist download complete!</b>\n\n" +
                 $"Sent: {sent}/{files.Count} videos\n" +
-                $"Failed: {files.Count - sent}",
+                $"Failed: {files.Count - sent}\n\nSend another link to continue, or send /cancel.",
                 parseMode: ParseMode.Html, cancellationToken: ct);
 
-            session.CurrentStep = DownloadStep.Done;
+            session.CurrentStep = DownloadStep.WaitingForUrl;
             _sessionManager.UpdateSession(session);
 
             // Cleanup
@@ -616,8 +619,12 @@ public sealed class ConversationHandler
                 }
             }
 
-            session.CurrentStep = DownloadStep.Done;
+            session.CurrentStep = DownloadStep.WaitingForUrl;
             _sessionManager.UpdateSession(session);
+
+            await bot.SendMessage(chatId,
+                $"✅ <b>Download complete!</b>\n\nSend another YouTube or Instagram link to continue, or send /cancel.\n\n<b>{EscapeHtml(title)}</b> has been sent.",
+                parseMode: ParseMode.Html, cancellationToken: ct);
 
             // Clean up the temp working file only — never delete a cached copy.
             if (!result.FromCache)
@@ -726,8 +733,12 @@ public sealed class ConversationHandler
                     cancellationToken: ct);
             }
 
-            session.CurrentStep = DownloadStep.Done;
+            session.CurrentStep = DownloadStep.WaitingForUrl;
             _sessionManager.UpdateSession(session);
+
+            await bot.SendMessage(chatId,
+                $"✅ <b>Download complete!</b>\n\nSend another YouTube or Instagram link to continue, or send /cancel.\n\n<b>{EscapeHtml(title)}</b> has been sent.",
+                parseMode: ParseMode.Html, cancellationToken: ct);
 
             // Clean up the temp working file only — never delete a cached copy.
             if (!result.FromCache)
@@ -830,10 +841,10 @@ public sealed class ConversationHandler
             await bot.SendMessage(chatId,
                 $"✅ <b>Audio playlist download complete!</b>\n\n" +
                 $"Sent: {sent}/{files.Count} audio tracks\n" +
-                $"Failed: {files.Count - sent}",
+                $"Failed: {files.Count - sent}\n\nSend another link to continue, or send /cancel.",
                 parseMode: ParseMode.Html, cancellationToken: ct);
 
-            session.CurrentStep = DownloadStep.Done;
+            session.CurrentStep = DownloadStep.WaitingForUrl;
             _sessionManager.UpdateSession(session);
 
             // Cleanup

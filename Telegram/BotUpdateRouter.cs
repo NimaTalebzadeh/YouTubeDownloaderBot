@@ -87,7 +87,7 @@ public sealed class BotUpdateRouter
 
             // Handle text input in conversation flow
             if (_sessionManager.TryGetSession(userId, out var session) &&
-                session.CurrentStep is not DownloadStep.Start and not DownloadStep.Done and not DownloadStep.Error and not DownloadStep.Downloading)
+                session.CurrentStep is not DownloadStep.Start and not DownloadStep.Error and not DownloadStep.Downloading)
             {
                 await _conversationHandler.HandleAsync(bot, chatId, userId, text, ct);
             }
