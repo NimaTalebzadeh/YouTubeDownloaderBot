@@ -12,13 +12,18 @@ namespace YouTubeDownloaderBot.Services;
 
 public sealed class YouTubeDownloadService
 {
-    private readonly YoutubeClient _youtube = new();
+    private readonly YoutubeClient _youtube;
     private readonly string _tempDirectory;
     private readonly DownloadCacheService _cache;
     private readonly ILogger<YouTubeDownloadService> _logger;
 
     public YouTubeDownloadService(DownloadCacheService cache, ILogger<YouTubeDownloadService> logger)
     {
+        var httpClient = new HttpClient
+        {
+            Timeout = TimeSpan.FromSeconds(30)
+        };
+        _youtube = new YoutubeClient(httpClient);
         _cache = cache;
         _logger = logger;
         _tempDirectory = Path.Combine(Path.GetTempPath(), "YouTubeDownloaderBot");
