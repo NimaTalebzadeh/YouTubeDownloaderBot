@@ -75,22 +75,26 @@ public sealed class YouTubeDownloadService
         var guid = Guid.NewGuid();
         var outputPattern = Path.Combine(_tempDirectory, $"part_{guid}_%03d{ext}");
 
-        // MaxPartSize (~45MB) per segment
+        // MaxPartSize per segment — use segment_size which the segment muxer honors
+        // (unlike -fs which only works for simple output files, not segment muxer)
+        var segmentSizeBytes = MaxPartSize; // 20MB
+        
         string args;
         if (ext is ".mp3")
         {
-            // Split by size, copy codec (no re-encode)
-            args = $"-i \"{inputPath}\" -c copy -f segment -segment_time 30:00:00 -fs {MaxPartSize / 1_048_576}M -copyts -reset_timestamps 1 \"{outputPattern}\"";
+            // MP3: every frame is independently decodable, so -c copy works
+            // with -segment_size (unlike -fs which doesn't work with segment muxer)
+            args = $"-i \"{inputPath}\" -c copy -map 0 -f segment -segment_time 30:00:00 -segment_size {segmentSizeBytes} -reset_timestamps 1 -y \"{outputPattern}\"";
         }
         else if (ext is ".m4a" or ".ogg" or ".wav" or ".flac")
         {
-            // Split by size, re-encode with AAC
-            args = $"-i \"{inputPath}\" -map 0 -f segment -segment_time 30:00:00 -fs {MaxPartSize / 1_048_576}M -c:a aac -b:a 128k -reset_timestamps 1 \"{outputPattern}\"";
+            // Other audio formats — re-encode with AAC
+            args = $"-i \"{inputPath}\" -map 0 -f segment -segment_time 30:00:00 -segment_size {segmentSizeBytes} -c:a aac -b:a 128k -reset_timestamps 1 -y \"{outputPattern}\"";
         }
         else
         {
             // Video: split by size with copy codec
-            args = $"-i \"{inputPath}\" -c copy -map 0 -f segment -segment_time 10:00:00 -fs {MaxPartSize / 1_048_576}M -reset_timestamps 1 \"{outputPattern}\"";
+            args = $"-i \"{inputPath}\" -c copy -map 0 -f segment -segment_time 10:00:00 -segment_size {segmentSizeBytes} -reset_timestamps 1 -y \"{outputPattern}\"";
         }
 
         var process = new Process
