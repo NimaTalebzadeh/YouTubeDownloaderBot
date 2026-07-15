@@ -17,10 +17,10 @@ public sealed class YouTubeDownloadService
     private readonly DownloadCacheService _cache;
     private readonly ILogger<YouTubeDownloadService> _logger;
 
-    // Telegram Bot API has a 50MB upload limit. With multipart encoding overhead,
-    // we use 45MB as a safe upper bound for each part.
-    private const long MaxPartSize = 45 * 1024 * 1024; // 45 MB
-    private const long MaxPartSizeNoSplit = 44 * 1024 * 1024; // 44 MB
+    // Telegram Bot API has a 50MB upload limit. With multipart encoding overhead
+    // and ffmpeg -fs imprecision (cuts at next keyframe), we use a conservative bound.
+    private const long MaxPartSize = 35 * 1024 * 1024; // 35 MB per segment
+    private const long MaxPartSizeNoSplit = 30 * 1024 * 1024; // 30 MB — no split needed
 
     public YouTubeDownloadService(DownloadCacheService cache, ILogger<YouTubeDownloadService> logger)
     {
