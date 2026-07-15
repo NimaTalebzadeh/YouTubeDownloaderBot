@@ -61,26 +61,30 @@ public sealed class YouTubeDownloadService
         var fileInfo = new FileInfo(inputPath);
         var totalSizeMb = fileInfo.Length / 1_048_576.0;
         
-        // If total is <= 50MB, no split needed
-        if (totalSizeMb <= 50)
+        // If total is <= 49MB (under Telegram's 50MB limit), no split needed
+        if (totalSizeMb <= 49)
             return new List<string> { inputPath };
 
         var ext = Path.GetExtension(inputPath).ToLowerInvariant();
         var guid = Guid.NewGuid();
         var outputPattern = Path.Combine(_tempDirectory, $"part_{guid}_%03d{ext}");
 
-        // For audio-only files (mp3, m4a, ogg, etc.), re-encode is needed for segment muxer
-        var isAudio = ext is ".mp3" or ".m4a" or ".ogg" or ".wav" or ".flac";
-        
+        // For audio: split by time only (no size limit, no re-encode)
+        // segment muxer + -c copy works fine with MP3 using -copyts
         string args;
-        if (isAudio)
+        if (ext is ".mp3")
         {
-            // Split audio by time (~10 min per part), re-encode to MP3 with constant bitrate
-            args = $"-i \"{inputPath}\" -map 0 -f segment -segment_time 00:10:00 -c:a libmp3lame -q:a 2 -ar 44100 -ac 2 -reset_timestamps 1 \"{outputPattern}\"";
+            // ~8 min per part at 128kbps ≈ 12MB — safe for Telegram
+            args = $"-i \"{inputPath}\" -c copy -f segment -segment_time 00:08:00 -copyts -reset_timestamps 1 \"{outputPattern}\"";
+        }
+        else if (ext is ".m4a" or ".ogg" or ".wav" or ".flac")
+        {
+            // Other audio formats — use re-encode but fast preset
+            args = $"-i \"{inputPath}\" -map 0 -f segment -segment_time 00:08:00 -c:a aac -b:a 128k -reset_timestamps 1 \"{outputPattern}\"";
         }
         else
         {
-            // Split video by keyframe before 49MB per segment (under Telegram's 50MB limit)
+            // Video: split by keyframe before 49MB per segment
             args = $"-i \"{inputPath}\" -c copy -map 0 -f segment -segment_time 10:00:00 -fs 49M -reset_timestamps 1 \"{outputPattern}\"";
         }
 
