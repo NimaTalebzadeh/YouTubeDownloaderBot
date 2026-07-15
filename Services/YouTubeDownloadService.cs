@@ -60,11 +60,24 @@ public sealed class YouTubeDownloadService
         if (totalSizeMb <= 50)
             return new List<string> { inputPath };
 
+        var ext = Path.GetExtension(inputPath).ToLowerInvariant();
         var guid = Guid.NewGuid();
-        var outputPattern = Path.Combine(_tempDirectory, $"part_{guid}_%03d{Path.GetExtension(inputPath)}");
+        var outputPattern = Path.Combine(_tempDirectory, $"part_{guid}_%03d{ext}");
 
-        // Split by keyframe before 49MB per segment (under Telegram's 50MB limit)
-        var args = $"-i \"{inputPath}\" -c copy -map 0 -f segment -segment_time 10:00:00 -fs 49M -reset_timestamps 1 \"{outputPattern}\"";
+        // For audio-only files (mp3, m4a, ogg, etc.), re-encode is needed for segment muxer
+        var isAudio = ext is ".mp3" or ".m4a" or ".ogg" or ".wav" or ".flac";
+        
+        string args;
+        if (isAudio)
+        {
+            // Split audio by time (~10 min per part), re-encode to MP3 with constant bitrate
+            args = $"-i \"{inputPath}\" -map 0 -f segment -segment_time 00:10:00 -c:a libmp3lame -q:a 2 -ar 44100 -ac 2 -reset_timestamps 1 \"{outputPattern}\"";
+        }
+        else
+        {
+            // Split video by keyframe before 49MB per segment (under Telegram's 50MB limit)
+            args = $"-i \"{inputPath}\" -c copy -map 0 -f segment -segment_time 10:00:00 -fs 49M -reset_timestamps 1 \"{outputPattern}\"";
+        }
 
         var process = new Process
         {
@@ -80,7 +93,23 @@ public sealed class YouTubeDownloadService
         };
 
         process.Start();
-        await process.WaitForExitAsync(ct);
+        
+        // Use a combined cancellation token with a 5-minute timeout
+        using var timeoutCts = new CancellationTokenSource(TimeSpan.FromMinutes(5));
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token);
+        
+        try
+        {
+            await process.WaitForExitAsync(linkedCts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            if (!process.HasExited)
+            {
+                try { process.Kill(); } catch { }
+            }
+            throw new TimeoutException("Splitting timed out after 5 minutes. The file might be corrupt or too long.");
+        }
 
         if (process.ExitCode != 0)
         {
